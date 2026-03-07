@@ -52,8 +52,10 @@ describe('features - label-editing', function() {
         // then
         expect(directEditing.isActive()).to.be.true;
 
-        // clean up
-        directEditing._textbox.destroy();
+        // clean up — use cancel() so the lifecycle events fire and the
+        // focusout listener on the canvas container is properly detached
+        // before the textbox DOM node is removed.
+        directEditing.cancel();
       }
     ));
 
@@ -241,6 +243,110 @@ describe('features - label-editing', function() {
 
         // then
         expect(task.name).not.to.equal('FOO BAR');
+      }
+    ));
+
+  });
+
+
+  describe('complete on focus loss outside canvas', function() {
+
+    beforeEach(bootstrapModeler(diagramXML, {
+      modules: [
+        labelEditingModule,
+        coreModule,
+        draggingModule,
+        modelingModule
+      ]
+    }));
+
+    var directEditing,
+        elementRegistry,
+        eventBus;
+
+    beforeEach(inject([
+      'directEditing', 'elementRegistry', 'eventBus',
+      function(_directEditing, _elementRegistry, _eventBus) {
+        directEditing = _directEditing;
+        elementRegistry = _elementRegistry;
+        eventBus = _eventBus;
+      }
+    ]));
+
+    afterEach(function() {
+
+      // Cancel any leftover editing session so the focusout listener on the
+      // canvas container is detached before the textbox DOM node is removed.
+      // Using _textbox.destroy() directly would bypass the lifecycle and
+      // cause a "removeChild" NotFoundError in the blur handler.
+      if (directEditing.isActive()) {
+        directEditing.cancel();
+      }
+    });
+
+
+    it('should complete when focus moves to an element outside the canvas', inject(
+      function(canvas) {
+
+        // given
+        var shape = elementRegistry.get('Task_1'),
+            task = shape.businessObject;
+
+        eventBus.fire('element.dblclick', { element: shape });
+
+        expect(directEditing.isActive()).to.be.true;
+
+        var newName = 'saved via focusout';
+        directEditing._textbox.content.innerText = newName;
+
+        // Create an external element to be the focus destination,
+        // simulating the user clicking outside the canvas (e.g. a toolbar).
+        var externalEl = document.createElement('button');
+        document.body.appendChild(externalEl);
+
+        // when — dispatch focusout on the textbox itself (mimicking reality).
+        // It bubbles up through the DOM and reaches the capture listener on
+        // canvas.getContainer(), which calls directEditing.complete().
+        directEditing._textbox.content.dispatchEvent(new FocusEvent('focusout', {
+          bubbles: true,
+          cancelable: true,
+          relatedTarget: externalEl
+        }));
+
+        document.body.removeChild(externalEl);
+
+        // then — the edit must be completed and the new label persisted
+        expect(directEditing.isActive()).to.be.false;
+        expect(task.name).to.equal(newName);
+      }
+    ));
+
+
+    it('should complete when the browser window loses focus (relatedTarget null)', inject(
+      function() {
+
+        // given
+        var shape = elementRegistry.get('Task_1'),
+            task = shape.businessObject;
+
+        eventBus.fire('element.dblclick', { element: shape });
+
+        expect(directEditing.isActive()).to.be.true;
+
+        var newName = 'saved via window blur';
+        directEditing._textbox.content.innerText = newName;
+
+        // when — relatedTarget is null, meaning focus left the browser window
+        // entirely (Alt-Tab, clicking the OS taskbar, etc.).
+        directEditing._textbox.content.dispatchEvent(new FocusEvent('focusout', {
+          bubbles: true,
+          cancelable: true,
+          relatedTarget: null
+        }));
+
+        // then
+        expect(directEditing.isActive()).to.be.false;
+        expect(task.name).to.equal(newName);
       }
     ));
 
